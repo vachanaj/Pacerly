@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI, status
+from fastapi import Depends, FastAPI, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,16 @@ app = FastAPI(
     docs_url="/user/docs",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _to_response(profile: UserProfile) -> UserProfileResponse:
@@ -92,8 +102,7 @@ async def update_my_profile(
     db: AsyncSession = Depends(get_db),
 ):
     profile = await _get_or_provision_profile(current_user, db)
-    updates = payload.model_dump(exclude_unset=True)
-    for field, value in updates.items():
+    for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(profile, field, value)
 
     await db.commit()
@@ -101,11 +110,22 @@ async def update_my_profile(
     return _to_response(profile)
 
 
-@app.delete("/user/me", status_code=status.HTTP_204_NO_CONTENT, tags=["Profile"])
+@app.get("/user/me/export", response_model=UserProfileResponse, tags=["GDPR Privacy"])
+async def export_my_personal_data(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """GDPR Article 15 & 20: Right of access and machine-readable data portability."""
+    profile = await _get_or_provision_profile(current_user, db)
+    return _to_response(profile)
+
+
+@app.delete("/user/me", status_code=status.HTTP_204_NO_CONTENT, tags=["GDPR Privacy"])
 async def delete_my_profile(
     current_user: AuthenticatedUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """GDPR Article 17: Right to erasure of personal runner profile data."""
     result = await db.execute(
         select(UserProfile).where(UserProfile.user_id == current_user.user_id)
     )
