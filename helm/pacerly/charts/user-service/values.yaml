@@ -1,0 +1,37 @@
+replicaCount: 1
+
+namespace: pacerly-app
+
+image:
+  repository: ghcr.io/your-org/pacerly-user-service
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+database:
+  url: "postgresql+asyncpg://user_svc:ChangeMeUserDb!@postgresql.pacerly-app.svc.cluster.local:5432/user_db"
+
+keycloak:
+  issuerUrl: "https://group-4-m7011e-ltu.se/auth/realms/pacerly"
+  internalJwksUrl: "http://keycloak.pacerly-app.svc.cluster.local:8080/auth/realms/pacerly/protocol/openid-connect/certs"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  host: "group-4-m7011e-ltu.se"
+  path: "/user"
+  tls:
+    enabled: true
+    secretName: "group-4-m7011e-ltu-tls"
+    clusterIssuer: "letsencrypt-prod"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
