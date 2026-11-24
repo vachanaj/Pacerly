@@ -19,7 +19,7 @@ keycloak:
   internalJwksUrl: "http://keycloak.pacerly-app.svc.cluster.local:8080/auth/realms/pacerly/protocol/openid-connect/certs"
 
 ingress:
-  enabled: true
+  enabled: false
   className: "nginx"
   host: "group-4-m7011e-ltu.se"
   path: "/user"

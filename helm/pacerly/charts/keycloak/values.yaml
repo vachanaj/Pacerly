@@ -27,7 +27,7 @@ service:
   managementPort: 9000
 
 ingress:
-  enabled: true
+  enabled: false
   className: "nginx"
   host: "group-4-m7011e-ltu.se"
   path: "/auth"

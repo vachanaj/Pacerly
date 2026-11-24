@@ -25,7 +25,6 @@ bearer_scheme = HTTPBearer(auto_error=True)
 
 
 class AuthenticatedUser(BaseModel):
-    """Maps directly to the `user_profiles` table keys."""
     user_id: UUID          # Matches user_profiles.user_id (PK)
     email: str             # Matches user_profiles.email (UK)
     display_name: str      # Matches user_profiles.display_name
