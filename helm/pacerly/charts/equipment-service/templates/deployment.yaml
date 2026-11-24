@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: equipment-service
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: equipment-service
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: equipment-service
+  template:
+    metadata:
+      labels:
+        app: equipment-service
+    spec:
+      containers:
+        - name: equipment-service
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8002
+          env:
+            - name: KEYCLOAK_ISSUER_URL
+              value: {{ .Values.keycloak.issuerUrl | quote }}
+            - name: KEYCLOAK_INTERNAL_JWKS_URL
+              value: {{ .Values.keycloak.internalJwksUrl | quote }}
+          envFrom:
+            - secretRef:
+                name: equipment-service-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
