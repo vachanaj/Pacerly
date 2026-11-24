@@ -1,0 +1,55 @@
+services:
+  activities-db:
+    image: postgres:16-alpine
+    container_name: pacerly-activities-db
+    environment:
+      POSTGRES_DB: activities
+      POSTGRES_USER: pacerly
+      POSTGRES_PASSWORD: pacerly_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - activities_data:/var/lib/postgresql/data
+      - ./databases/activities-db/schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pacerly -d activities"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  equipment-db:
+    image: postgres:16-alpine
+    container_name: pacerly-equipment-db
+    environment:
+      POSTGRES_DB: equipment
+      POSTGRES_USER: pacerly
+      POSTGRES_PASSWORD: pacerly_dev
+    ports:
+      - "5434:5432"
+    volumes:
+      - equipment_data:/var/lib/postgresql/data
+      - ./databases/equipment-db/schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pacerly -d equipment"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: pacerly-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: pacerly
+      RABBITMQ_DEFAULT_PASS: pacerly_dev
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  activities_data:
+  equipment_data:
