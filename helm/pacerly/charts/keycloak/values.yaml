@@ -1,0 +1,45 @@
+replicaCount: 1
+
+namespace: pacerly-app
+
+image:
+  repository: ghcr.io/your-org/pacerly-keycloak
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+keycloak:
+  hostname: "group-4-m7011e-ltu.se"
+  httpRelativePath: "/auth"
+  proxyHeaders: "xforwarded"
+  adminUser: "admin"
+  adminPassword: "ChangeMeAdminPassword!"
+
+database:
+  host: "postgresql.pacerly-app.svc.cluster.local"
+  port: 5432
+  name: "keycloak"
+  username: "keycloak_user"
+  password: "ChangeMeKeycloakDb!"
+
+service:
+  type: ClusterIP
+  httpPort: 8080
+  managementPort: 9000
+
+ingress:
+  enabled: false
+  className: "nginx"
+  host: "group-4-m7011e-ltu.se"
+  path: "/auth"
+  tls:
+    enabled: true
+    secretName: "group-4-m7011e-ltu-tls"
+    clusterIssuer: "letsencrypt-prod"
+
+resources:
+  requests:
+    cpu: 300m
+    memory: 768Mi
+  limits:
+    cpu: 1000m
+    memory: 1536Mi

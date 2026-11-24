@@ -1,0 +1,27 @@
+namespace: pacerly-app
+
+image:
+  repository: postgres
+  tag: "16-alpine"
+  pullPolicy: IfNotPresent
+
+auth:
+  postgresPassword: "ChangeMeRootPostgres!"
+  # Enforces SCRAM-SHA-256 authentication & password hashing across PostgreSQL
+  initdbArgs: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+
+service:
+  port: 5432
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClassName: "" # Uses cluster default StorageClass when empty
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
