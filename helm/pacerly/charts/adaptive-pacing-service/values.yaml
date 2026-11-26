@@ -1,0 +1,30 @@
+replicaCount: 1
+
+image:
+  repository: pacerly/adaptive-pacing-service
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8003
+  targetPort: 8003
+
+env:
+  rabbitmqExchange: "pacerly.events"
+  rabbitmqQueue: "adaptive-pacing.activity_logged"
+  rabbitmqRoutingKey: "activity.logged"
+  corsOrigins: "http://localhost:5173,http://127.0.0.1:5173"
+
+secrets:
+  # Update for in-cluster Kubernetes hostnames/credentials when deploying to a cluster
+  databaseUrl: "postgresql://pacerly:pacerly_dev@localhost:5435/paces"
+  rabbitmqUrl: "amqp://pacerly:pacerly_dev@localhost:5672/"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

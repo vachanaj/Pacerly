@@ -1,0 +1,24 @@
+# helm/pacerly/Chart.yaml
+apiVersion: v2
+name: pacerly
+description: Umbrella Helm Chart for Pacerly Dynamic Gear & Endurance Platform
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+dependencies:
+  - name: postgresql
+    version: 0.1.0
+    repository: "file://charts/postgresql"
+  - name: keycloak
+    version: 0.1.0
+    repository: "file://charts/keycloak"
+  - name: user-service
+    version: 0.1.0
+    repository: "file://charts/user-service"
+  - name: adaptive-pacing-service
+    version: "0.1.0"
+    repository: "file://charts/adaptive-pacing-service"
+    condition: adaptive-pacing-service.enabled
+
+# Deploy using command: helm upgrade --install pacerly ./helm/pacerly -n pacerly-app --create-namespace

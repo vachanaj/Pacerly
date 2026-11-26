@@ -1,0 +1,6 @@
+apiVersion: v2
+name: adaptive-pacing-service
+description: Helm chart for the Pacerly Adaptive Pacing microservice
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
