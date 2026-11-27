@@ -14,6 +14,14 @@ data:
     CREATE DATABASE user_db OWNER user_svc;
     GRANT ALL PRIVILEGES ON DATABASE user_db TO user_svc;
 
+    CREATE USER activity_svc WITH ENCRYPTED PASSWORD 'ChangeMeActivityDb!';
+    CREATE DATABASE activities_db OWNER activity_svc;
+    GRANT ALL PRIVILEGES ON DATABASE activities_db TO activity_svc;
+
+    CREATE USER equipment_svc WITH ENCRYPTED PASSWORD 'ChangeMeEquipmentDb!';
+    CREATE DATABASE equipment_db OWNER equipment_svc;
+    GRANT ALL PRIVILEGES ON DATABASE equipment_db TO equipment_svc;
+
   01-user-schema.sql: |
     \connect user_db user_svc;
 
@@ -48,3 +56,73 @@ data:
     BEFORE UPDATE ON user_profiles
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at_timestamp();
+
+  02-activities-schema.sql: |
+    \connect activities_db activity_svc;
+
+    CREATE TABLE IF NOT EXISTS activities (
+        activity_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL,
+        shoe_id UUID NULL,
+        title VARCHAR(255) NOT NULL,
+        workout_type VARCHAR(50) NOT NULL,
+        total_distance_km NUMERIC(8, 2) NOT NULL CHECK (total_distance_km > 0),
+        total_duration_sec INT NOT NULL CHECK (total_duration_sec > 0),
+        avg_pace_sec_per_km INT NOT NULL CHECK (avg_pace_sec_per_km > 0),
+        perceived_exertion INT CHECK (perceived_exertion BETWEEN 1 AND 10),
+        started_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS activity_splits (
+        split_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        activity_id UUID NOT NULL REFERENCES activities(activity_id) ON DELETE CASCADE,
+        split_number INT NOT NULL CHECK (split_number > 0),
+        distance_km NUMERIC(8, 2) NOT NULL CHECK (distance_km > 0),
+        duration_sec INT NOT NULL CHECK (duration_sec > 0),
+        pace_sec_per_km INT NOT NULL CHECK (pace_sec_per_km > 0),
+        elevation_gain_m NUMERIC(8, 2) DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS outbox_events (
+        event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        aggregate_id UUID NOT NULL,
+        routing_key VARCHAR(100) NOT NULL,
+        payload JSONB NOT NULL,
+        published BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox_events (published, created_at) WHERE published = FALSE;
+
+  03-equipment-schema.sql: |
+    \connect equipment_db equipment_svc;
+
+    CREATE TABLE IF NOT EXISTS shoes (
+        shoe_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL,
+        brand VARCHAR(100) NOT NULL,
+        model VARCHAR(100) NOT NULL,
+        nickname VARCHAR(100),
+        max_lifespan_km NUMERIC(8, 2) NOT NULL CHECK (max_lifespan_km > 0),
+        current_mileage_km NUMERIC(8, 2) NOT NULL DEFAULT 0 CHECK (current_mileage_km >= 0),
+        wear_percentage NUMERIC(5, 2) GENERATED ALWAYS AS (
+            CASE
+                WHEN max_lifespan_km > 0 THEN ROUND((current_mileage_km / max_lifespan_km) * 100, 2)
+                ELSE 0
+            END
+        ) STORED,
+        status VARCHAR(30) NOT NULL DEFAULT 'active',
+        is_default BOOLEAN NOT NULL DEFAULT FALSE,
+        purchased_at DATE,
+        retired_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS shoe_mileage_logs (
+        log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        shoe_id UUID NOT NULL REFERENCES shoes(shoe_id) ON DELETE CASCADE,
+        activity_id UUID NOT NULL UNIQUE,
+        distance_added_km NUMERIC(8, 2) NOT NULL CHECK (distance_added_km > 0),
+        logged_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );

@@ -1,4 +1,3 @@
-# helm/pacerly/Chart.yaml
 apiVersion: v2
 name: pacerly
 description: Umbrella Helm Chart for Pacerly Dynamic Gear & Endurance Platform
@@ -16,5 +15,14 @@ dependencies:
   - name: user-service
     version: 0.1.0
     repository: "file://charts/user-service"
+  - name: activity-service
+    version: 0.1.0
+    repository: "file://charts/activity-service"
+  - name: equipment-service
+    version: 0.1.0
+    repository: "file://charts/equipment-service"
+  - name: rabbitmq
+    version: 0.1.0
+    repository: "file://charts/rabbitmq"
 
 # Deploy using command: helm upgrade --install pacerly ./helm/pacerly -n pacerly-app --create-namespace

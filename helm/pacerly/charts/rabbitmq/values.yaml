@@ -1,0 +1,25 @@
+replicaCount: 1
+
+namespace: pacerly-app
+
+image:
+  repository: rabbitmq
+  tag: "3.13-management-alpine"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 5672
+  managementPort: 15672
+
+auth:
+  username: "pacerly"
+  password: "ChangeMeRabbit!"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
