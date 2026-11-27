@@ -1,0 +1,40 @@
+replicaCount: 1
+
+namespace: pacerly-app
+
+image:
+  repository: ghcr.io/vachanaj/pacerly-activity-service
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+database:
+  url: "postgresql://activity_svc:ChangeMeActivityDb!@postgresql.pacerly-app.svc.cluster.local:5432/activities_db"
+
+rabbitmq:
+  url: "amqp://pacerly:ChangeMeRabbit!@rabbitmq.pacerly-app.svc.cluster.local:5672/"
+
+keycloak:
+  issuerUrl: "https://group-4-m7011e-ltu.se/auth/realms/pacerly"
+  internalJwksUrl: "http://keycloak.pacerly-app.svc.cluster.local:8080/auth/realms/pacerly/protocol/openid-connect/certs"
+
+ingress:
+  enabled: false
+  className: "nginx"
+  host: "group-4-m7011e-ltu.se"
+  path: "/activities"
+  tls:
+    enabled: true
+    secretName: "group-4-m7011e-ltu-tls"
+    clusterIssuer: "letsencrypt-prod"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

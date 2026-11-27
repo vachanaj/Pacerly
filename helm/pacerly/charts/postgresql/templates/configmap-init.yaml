@@ -104,7 +104,7 @@ data:
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    CREATE INDEX idx_outbox_unpublished ON outbox_events (published, created_at) WHERE published = FALSE;
+    CREATE INDEX IF NOT EXISTS idx_outbox_unpublished ON outbox_events (published, created_at) WHERE published = FALSE;
 
   03-equipment-schema.sql: |
     \connect equipment_db equipment_svc;
