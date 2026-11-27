@@ -1,0 +1,6 @@
+apiVersion: v2
+name: keycloak
+description: Keycloak OIDC Identity Provider for Pacerly
+type: application
+version: 0.1.0
+appVersion: "26.2.0"

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: postgresql
+description: Shared PostgreSQL StatefulSet hosting isolated logical databases for Pacerly
+type: application
+version: 0.1.0
+appVersion: "16.4.0"
