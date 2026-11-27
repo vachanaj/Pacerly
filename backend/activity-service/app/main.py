@@ -7,8 +7,10 @@ from uuid import UUID
 
 import aio_pika
 import asyncpg
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException  # <-- JWT: added Depends, removed Header
 from pydantic import BaseModel, Field
+
+from shared.auth import AuthenticatedUser, get_current_user  # <-- JWT: import Keycloak auth
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -20,8 +22,6 @@ RABBITMQ_URL = os.getenv(
 )
 EXCHANGE_NAME = "pacerly.events"
 ROUTING_KEY = "activity.logged"
-
-DEFAULT_TEST_USER = UUID("11111111-1111-1111-1111-111111111111")
 
 db_pool: asyncpg.Pool | None = None
 rmq_connection: aio_pika.abc.AbstractRobustConnection | None = None
@@ -65,7 +65,12 @@ async def lifespan(app: FastAPI):
     await db_pool.close()
 
 
-app = FastAPI(title="Pacerly Activity Service", lifespan=lifespan)
+app = FastAPI(
+    title="Pacerly Activity Service",
+    openapi_url="/activities/openapi.json",  # <-- Optional: ensures Swagger works behind /activities Ingress
+    docs_url="/activities/docs",
+    lifespan=lifespan,
+)
 
 
 def format_activity(row: asyncpg.Record) -> dict:
@@ -82,7 +87,7 @@ async def health_check():
 @app.post("/activities", status_code=201)
 async def create_activity(
     activity: ActivityCreate,
-    x_user_id: Annotated[UUID, Header()] = DEFAULT_TEST_USER,
+    current_user: AuthenticatedUser = Depends(get_current_user),  # <-- JWT
 ):
     avg_pace = max(1, round(activity.total_duration_sec / activity.total_distance_km))
     started_at = activity.started_at or datetime.now(UTC)
@@ -98,7 +103,7 @@ async def create_activity(
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
             """,
-            x_user_id,
+            current_user.user_id,  # <-- JWT
             activity.shoe_id,
             activity.title,
             activity.workout_type,
@@ -130,7 +135,7 @@ async def create_activity(
 
         event_payload = {
             "activity_id": str(activity_id),
-            "user_id": str(x_user_id),
+            "user_id": str(current_user.user_id),  # <-- JWT
             "shoe_id": str(activity.shoe_id) if activity.shoe_id else None,
             "workout_type": activity.workout_type,
             "total_distance_km": float(activity.total_distance_km),
@@ -170,12 +175,12 @@ async def create_activity(
 
 @app.get("/activities")
 async def list_activities(
-    x_user_id: Annotated[UUID, Header()] = DEFAULT_TEST_USER,
+    current_user: AuthenticatedUser = Depends(get_current_user),  # <-- JWT
 ):
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT * FROM activities WHERE user_id = $1 ORDER BY started_at DESC",
-            x_user_id,
+            current_user.user_id,  # <-- JWT
         )
     return [format_activity(r) for r in rows]
 
@@ -183,13 +188,13 @@ async def list_activities(
 @app.get("/activities/{activity_id}")
 async def get_activity(
     activity_id: UUID,
-    x_user_id: Annotated[UUID, Header()] = DEFAULT_TEST_USER,
+    current_user: AuthenticatedUser = Depends(get_current_user),  # <-- JWT
 ):
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT * FROM activities WHERE activity_id = $1 AND user_id = $2",
             activity_id,
-            x_user_id,
+            current_user.user_id,  # <-- JWT
         )
         if not row:
             raise HTTPException(status_code=404, detail="Activity not found")
@@ -216,13 +221,13 @@ async def get_activity(
 @app.delete("/activities/{activity_id}", status_code=204)
 async def delete_activity(
     activity_id: UUID,
-    x_user_id: Annotated[UUID, Header()] = DEFAULT_TEST_USER,
+    current_user: AuthenticatedUser = Depends(get_current_user),  # <-- JWT
 ):
     async with db_pool.acquire() as conn:
         deleted = await conn.fetchval(
             "DELETE FROM activities WHERE activity_id = $1 AND user_id = $2 RETURNING activity_id",
             activity_id,
-            x_user_id,
+            current_user.user_id,  # <-- JWT
         )
     if not deleted:
         raise HTTPException(status_code=404, detail="Activity not found")
