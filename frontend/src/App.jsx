@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Activity,
   AlertTriangle,
+  Archive,
   CheckCircle2,
   Clipboard,
   ClipboardCheck,
@@ -40,6 +41,7 @@ const INITIAL_SHOES = [
     current_mileage_km: 412.5,
     max_lifespan_km: 800,
     is_default: true,
+    is_retired: false,
   },
   {
     shoe_id: 'bbbb2222-2222-2222-2222-222222222222',
@@ -49,6 +51,7 @@ const INITIAL_SHOES = [
     current_mileage_km: 585.0,
     max_lifespan_km: 700,
     is_default: false,
+    is_retired: false,
   },
   {
     shoe_id: 'cccc3333-3333-3333-3333-333333333333',
@@ -58,6 +61,7 @@ const INITIAL_SHOES = [
     current_mileage_km: 198.0,
     max_lifespan_km: 400,
     is_default: false,
+    is_retired: false,
   },
 ];
 
@@ -69,6 +73,7 @@ const INITIAL_LEDGER = [
     distance_km: 10.0,
     duration_sec: 3420,
     avg_pace_sec_per_km: 342,
+    perceived_exertion: 5,
     training_load_score: 4.67,
     activity_date: new Date(Date.now() - 1 * 86400000).toISOString(),
   },
@@ -79,6 +84,7 @@ const INITIAL_LEDGER = [
     distance_km: 12.0,
     duration_sec: 3600,
     avg_pace_sec_per_km: 300,
+    perceived_exertion: 8,
     training_load_score: 8.25,
     activity_date: new Date(Date.now() - 3 * 86400000).toISOString(),
   },
@@ -89,10 +95,25 @@ const INITIAL_LEDGER = [
     distance_km: 18.0,
     duration_sec: 6120,
     avg_pace_sec_per_km: 340,
+    perceived_exertion: 7,
     training_load_score: 11.38,
     activity_date: new Date(Date.now() - 5 * 86400000).toISOString(),
   },
 ];
+
+// Swap in Authorization: Bearer <token> once Keycloak is wired in
+function buildAuthHeaders(userId, bearerToken = null, extra = {}) {
+  const headers = {
+    Accept: 'application/json',
+    ...extra,
+  };
+  if (bearerToken) {
+    headers.Authorization = `Bearer ${bearerToken}`;
+  } else {
+    headers['X-User-Id'] = userId;
+  }
+  return headers;
+}
 
 function formatPace(secondsPerKm) {
   if (!secondsPerKm || secondsPerKm <= 0) return '--:--';
@@ -158,6 +179,45 @@ function derivePaceTargets(rolling7dFatigueScore, baselinePaceSec = DEFAULT_BASE
   };
 }
 
+function normalizeActivityItem(raw) {
+  const distanceKm = Number(raw.distance_km ?? raw.total_distance_km ?? 0);
+  const durationSec = Number(raw.duration_sec ?? raw.total_duration_sec ?? 0);
+  const workoutType = raw.workout_type || 'easy';
+  const avgPace =
+    Number(raw.avg_pace_sec_per_km) ||
+    (distanceKm > 0 && durationSec > 0 ? Math.max(1, Math.round(durationSec / distanceKm)) : 330);
+  const loadScore =
+    raw.training_load_score !== undefined && raw.training_load_score !== null
+      ? Number(raw.training_load_score)
+      : computeWorkoutLoad(durationSec, avgPace, workoutType, DEFAULT_BASELINE_PACE_SEC);
+
+  return {
+    activity_id: raw.activity_id || raw.id || generateUUID(),
+    title: raw.title || `${workoutType.toUpperCase()} Run`,
+    workout_type: workoutType,
+    distance_km: distanceKm,
+    duration_sec: durationSec,
+    avg_pace_sec_per_km: avgPace,
+    perceived_exertion: raw.perceived_exertion ?? null,
+    activity_splits: raw.activity_splits ?? raw.splits ?? null,
+    training_load_score: loadScore,
+    activity_date: raw.activity_date || raw.started_at || raw.created_at || new Date().toISOString(),
+  };
+}
+
+function normalizeShoeItem(raw) {
+  return {
+    shoe_id: raw.shoe_id || raw.id || generateUUID(),
+    brand: raw.brand || 'Unknown',
+    model: raw.model || 'Running Shoe',
+    nickname: raw.nickname || raw.name || 'Rotation Shoe',
+    current_mileage_km: Number(raw.current_mileage_km ?? raw.mileage_km ?? 0),
+    max_lifespan_km: Number(raw.max_lifespan_km ?? 700),
+    is_default: Boolean(raw.is_default),
+    is_retired: Boolean(raw.is_retired),
+  };
+}
+
 function generateUUID() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -197,11 +257,13 @@ const FATIGUE_THEME = {
 };
 
 export default function App() {
-  // Connection & Auth Header state
+  // Connection & Auth Header state (bearerToken reserved for Keycloak integration)
   const [userId, setUserId] = useState(DEFAULT_USER_ID);
   const [customUserId, setCustomUserId] = useState(DEFAULT_USER_ID);
-  const [pacingApiUrl, setPacingApiUrl] = useState('http://localhost:8003');
-  const [activityApiUrl, setActivityApiUrl] = useState('http://localhost:8001');
+  const [bearerToken] = useState(null);
+  const [pacingApiUrl, setPacingApiUrl] = useState('http://localhost:8004');
+  const [activityApiUrl, setActivityApiUrl] = useState('http://localhost:8003');
+  const [equipmentApiUrl, setEquipmentApiUrl] = useState('http://localhost:8002');
   const [simulationMode, setSimulationMode] = useState(false);
 
   // Live service status
@@ -215,11 +277,19 @@ export default function App() {
   const [shoes, setShoes] = useState(INITIAL_SHOES);
   const [liveProfile, setLiveProfile] = useState(null);
 
+  // Add Shoe modal/inline form state (Live API mode)
+  const [showAddShoe, setShowAddShoe] = useState(false);
+  const [newShoeBrand, setNewShoeBrand] = useState('');
+  const [newShoeModel, setNewShoeModel] = useState('');
+  const [newShoeNickname, setNewShoeNickname] = useState('');
+  const [newShoeMaxKm, setNewShoeMaxKm] = useState('700');
+
   // Workout Logger form state
   const [title, setTitle] = useState('Evening Tempo Progression');
   const [workoutType, setWorkoutType] = useState('tempo');
   const [distanceKm, setDistanceKm] = useState('10.0');
   const [durationMin, setDurationMin] = useState('50');
+  const [perceivedExertion, setPerceivedExertion] = useState('7');
   const [selectedShoeId, setSelectedShoeId] = useState(INITIAL_SHOES[0].shoe_id);
   const [lastEmittedEvent, setLastEmittedEvent] = useState(null);
   const [copiedPayload, setCopiedPayload] = useState(false);
@@ -229,6 +299,15 @@ export default function App() {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
   };
+
+  const activeShoes = useMemo(() => shoes.filter((s) => !s.is_retired), [shoes]);
+
+  useEffect(() => {
+    if (activeShoes.length > 0 && !activeShoes.some((s) => s.shoe_id === selectedShoeId)) {
+      const def = activeShoes.find((s) => s.is_default) || activeShoes[0];
+      setSelectedShoeId(def.shoe_id);
+    }
+  }, [activeShoes, selectedShoeId]);
 
   const simulatedProfile = useMemo(() => {
     const cutoff = Date.now() - 7 * 86400000;
@@ -252,7 +331,7 @@ export default function App() {
   const activeProfile = simulationMode || !liveProfile ? simulatedProfile : liveProfile;
   const theme = FATIGUE_THEME[activeProfile.fatigue_state] || FATIGUE_THEME.fresh;
 
-  const fetchLivePaces = useCallback(async () => {
+  const fetchLiveData = useCallback(async () => {
     if (simulationMode) {
       setServiceHealth('offline');
       setApiError(null);
@@ -261,14 +340,11 @@ export default function App() {
 
     setIsLoading(true);
     setApiError(null);
+    const headers = buildAuthHeaders(userId, bearerToken);
+
     try {
-      const cleanBase = pacingApiUrl.replace(/\/+$/, '');
-      const res = await fetch(`${cleanBase}/paces`, {
-        headers: {
-          'X-User-Id': userId,
-          Accept: 'application/json',
-        },
-      });
+      const cleanPacingBase = pacingApiUrl.replace(/\/+$/, '');
+      const res = await fetch(`${cleanPacingBase}/paces`, { headers });
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}: ${await res.text()}`);
       }
@@ -278,16 +354,47 @@ export default function App() {
     } catch (err) {
       setServiceHealth('offline');
       setApiError(
-        `Could not reach ${pacingApiUrl}/paces (${err.message}). Ensure FastAPI is running on port 8003 with CORSMiddleware enabled, or switch to Simulation Mode.`
+        `Could not reach ${pacingApiUrl}/paces (${err.message}). Ensure FastAPI is running on port 8004 with CORSMiddleware enabled, or switch to Simulation Mode.`
       );
+    }
+
+    // Best-effort live reads from equipment-service (8002) and activity-service (8003)
+    try {
+      const cleanEquipBase = equipmentApiUrl.replace(/\/+$/, '');
+      const shoesRes = await fetch(`${cleanEquipBase}/shoes`, { headers });
+      if (shoesRes.ok) {
+        const shoesJson = await shoesRes.json();
+        const list = Array.isArray(shoesJson) ? shoesJson : shoesJson.shoes || shoesJson.items || [];
+        if (list.length > 0) {
+          setShoes(list.map(normalizeShoeItem));
+        }
+      }
+    } catch {
+      // Keep current shoes list if equipment-service (8002) is not running yet
+    }
+
+    try {
+      const cleanActBase = activityApiUrl.replace(/\/+$/, '');
+      const actRes = await fetch(`${cleanActBase}/activities`, { headers });
+      if (actRes.ok) {
+        const actJson = await actRes.json();
+        const list = Array.isArray(actJson)
+          ? actJson
+          : actJson.activities || actJson.items || [];
+        if (list.length > 0) {
+          setLedger(list.map(normalizeActivityItem));
+        }
+      }
+    } catch {
+      // Keep current ledger if activity-service (8003) is not running yet
     } finally {
       setIsLoading(false);
     }
-  }, [pacingApiUrl, userId, simulationMode]);
+  }, [pacingApiUrl, activityApiUrl, equipmentApiUrl, userId, bearerToken, simulationMode]);
 
   useEffect(() => {
-    fetchLivePaces();
-  }, [fetchLivePaces]);
+    fetchLiveData();
+  }, [fetchLiveData]);
 
   const handleRecalculate = async () => {
     setIsRecalculating(true);
@@ -305,10 +412,7 @@ export default function App() {
       const cleanBase = pacingApiUrl.replace(/\/+$/, '');
       const res = await fetch(`${cleanBase}/paces/recalculate`, {
         method: 'POST',
-        headers: {
-          'X-User-Id': userId,
-          Accept: 'application/json',
-        },
+        headers: buildAuthHeaders(userId, bearerToken),
       });
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
@@ -324,10 +428,84 @@ export default function App() {
     }
   };
 
+  const handleCreateShoe = async (e) => {
+    e.preventDefault();
+    if (!newShoeBrand.trim() || !newShoeModel.trim()) return;
+
+    const payload = {
+      brand: newShoeBrand.trim(),
+      model: newShoeModel.trim(),
+      nickname: newShoeNickname.trim() || `${newShoeBrand.trim()} Rotation`,
+      max_lifespan_km: Number(newShoeMaxKm) || 700,
+      current_mileage_km: 0,
+      is_default: activeShoes.length === 0,
+    };
+
+    if (!simulationMode) {
+      try {
+        const cleanEquipBase = equipmentApiUrl.replace(/\/+$/, '');
+        const res = await fetch(`${cleanEquipBase}/shoes`, {
+          method: 'POST',
+          headers: buildAuthHeaders(userId, bearerToken, { 'Content-Type': 'application/json' }),
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          const created = normalizeShoeItem(await res.json());
+          setShoes((prev) => [created, ...prev]);
+          setSelectedShoeId(created.shoe_id);
+          setNewShoeBrand('');
+          setNewShoeModel('');
+          setNewShoeNickname('');
+          setShowAddShoe(false);
+          showToast('Shoe created via POST /shoes on equipment-service (8002).');
+          return;
+        }
+      } catch {
+        // Fall through to local update if 8002 is unreachable
+      }
+    }
+
+    const localShoe = normalizeShoeItem({ ...payload, shoe_id: generateUUID() });
+    setShoes((prev) => [localShoe, ...prev]);
+    setSelectedShoeId(localShoe.shoe_id);
+    setNewShoeBrand('');
+    setNewShoeModel('');
+    setNewShoeNickname('');
+    setShowAddShoe(false);
+    showToast('Added shoe locally.');
+  };
+
+  const handleRetireShoe = async (shoeId) => {
+    if (!simulationMode) {
+      try {
+        const cleanEquipBase = equipmentApiUrl.replace(/\/+$/, '');
+        const res = await fetch(`${cleanEquipBase}/shoes/${shoeId}/retire`, {
+          method: 'PATCH',
+          headers: buildAuthHeaders(userId, bearerToken),
+        });
+        if (res.ok) {
+          setShoes((prev) =>
+            prev.map((s) => (s.shoe_id === shoeId ? { ...s, is_retired: true } : s))
+          );
+          showToast('Shoe retired via PATCH /shoes/{id}/retire.');
+          return;
+        }
+      } catch {
+        // Fall through to local update if 8002 is unreachable
+      }
+    }
+
+    setShoes((prev) =>
+      prev.map((s) => (s.shoe_id === shoeId ? { ...s, is_retired: true } : s))
+    );
+    showToast('Marked shoe as retired locally.');
+  };
+
   const handleLogWorkout = async (e) => {
     e.preventDefault();
     const dist = parseFloat(distanceKm);
     const durSec = Math.round(parseFloat(durationMin) * 60);
+    const rpe = perceivedExertion ? Number(perceivedExertion) : null;
     if (isNaN(dist) || dist <= 0 || isNaN(durSec) || durSec <= 0) return;
 
     const avgPace = Math.max(1, Math.round(durSec / dist));
@@ -342,6 +520,7 @@ export default function App() {
       total_distance_km: dist,
       total_duration_sec: durSec,
       avg_pace_sec_per_km: avgPace,
+      perceived_exertion: rpe,
       started_at: startedAt,
     };
 
@@ -356,6 +535,7 @@ export default function App() {
         distance_km: dist,
         duration_sec: durSec,
         avg_pace_sec_per_km: avgPace,
+        perceived_exertion: rpe,
         training_load_score: loadScore,
         activity_date: startedAt,
       },
@@ -377,22 +557,20 @@ export default function App() {
         const cleanActBase = activityApiUrl.replace(/\/+$/, '');
         const res = await fetch(`${cleanActBase}/activities`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-User-Id': userId,
-          },
+          headers: buildAuthHeaders(userId, bearerToken, { 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             title: title.trim() || 'Logged Run',
             workout_type: workoutType,
             total_distance_km: dist,
             total_duration_sec: durSec,
+            perceived_exertion: rpe,
             shoe_id: selectedShoeId || null,
             started_at: startedAt,
           }),
         });
         if (res.ok) {
-          showToast('Workout sent to Activity Service -> RabbitMQ -> Adaptive Pacing!');
-          setTimeout(fetchLivePaces, 450);
+          showToast('Workout sent to Activity Service (8003) -> RabbitMQ -> Adaptive Pacing!');
+          setTimeout(fetchLiveData, 450);
           return;
         }
       } catch {
@@ -489,7 +667,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Controls: Mode Toggle, User Selector, Endpoint */}
+          {/* Controls: Mode Toggle, User Selector, Endpoints */}
           <div className="flex flex-wrap items-center gap-2.5">
             <div className="flex items-center bg-slate-100 border border-slate-200 rounded-lg p-1">
               <button
@@ -539,16 +717,39 @@ export default function App() {
             </div>
 
             {!simulationMode && (
-              <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
-                <Server className="h-3.5 w-3.5 text-slate-500" />
-                <input
-                  type="text"
-                  value={pacingApiUrl}
-                  onChange={(e) => setPacingApiUrl(e.target.value)}
-                  className="bg-transparent text-xs text-slate-800 w-36 focus:outline-none"
-                  placeholder="http://localhost:8003"
-                />
-              </div>
+              <>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
+                  <Server className="h-3.5 w-3.5 text-slate-500" />
+                  <input
+                    type="text"
+                    aria-label="Pacing API URL"
+                    value={pacingApiUrl}
+                    onChange={(e) => setPacingApiUrl(e.target.value)}
+                    className="bg-transparent text-xs text-slate-800 w-32 focus:outline-none"
+                    placeholder="http://localhost:8004"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
+                  <input
+                    type="text"
+                    aria-label="Activity API URL"
+                    value={activityApiUrl}
+                    onChange={(e) => setActivityApiUrl(e.target.value)}
+                    className="bg-transparent text-xs text-slate-800 w-32 focus:outline-none"
+                    placeholder="http://localhost:8003"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
+                  <input
+                    type="text"
+                    aria-label="Equipment API URL"
+                    value={equipmentApiUrl}
+                    onChange={(e) => setEquipmentApiUrl(e.target.value)}
+                    className="bg-transparent text-xs text-slate-800 w-32 focus:outline-none"
+                    placeholder="http://localhost:8002"
+                  />
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -575,7 +776,7 @@ export default function App() {
                 <p className="text-sm font-medium text-rose-900">{apiError}</p>
                 <p className="text-xs text-rose-700">
                   Tip: Browser requests to{' '}
-                  <code className="bg-rose-100 px-1 rounded">localhost:8003</code> require{' '}
+                  <code className="bg-rose-100 px-1 rounded">localhost:8004</code> require{' '}
                   <code className="bg-rose-100 px-1 rounded">CORSMiddleware</code> in FastAPI, or
                   click <strong className="text-rose-950">Switch to Simulate</strong> to test the
                   full pacing &amp; RabbitMQ flow right now.
@@ -585,7 +786,7 @@ export default function App() {
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={fetchLivePaces}
+                onClick={fetchLiveData}
                 className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-100 text-xs font-medium text-slate-800 border border-slate-300 transition"
               >
                 Retry Live
@@ -608,6 +809,9 @@ export default function App() {
             <code className="px-2 py-0.5 rounded bg-slate-100 text-emerald-700 border border-slate-200">
               X-User-Id: {userId}
             </code>
+            <span className="text-[11px] text-slate-500">
+              (8002 shoes • 8003 activities • 8004 paces)
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -655,7 +859,7 @@ export default function App() {
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={fetchLivePaces}
+                onClick={fetchLiveData}
                 disabled={isLoading || simulationMode}
                 className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-50 disabled:opacity-40 text-xs font-semibold text-slate-800 border border-slate-300 transition"
               >
@@ -778,8 +982,8 @@ export default function App() {
                 Log Workout / Emit Event
               </h3>
               <p className="text-xs text-slate-600 mt-0.5">
-                Publishes <code className="text-emerald-700 font-medium">activity.logged</code>{' '}
-                &amp; updates 7-day load + shoe wear
+                Posts to <code className="text-emerald-700 font-medium">:8003/activities</code>{' '}
+                &amp; emits <code className="text-emerald-700 font-medium">activity.logged</code>
               </p>
             </div>
 
@@ -825,7 +1029,7 @@ export default function App() {
                     onChange={(e) => setSelectedShoeId(e.target.value)}
                     className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-emerald-500"
                   >
-                    {shoes.map((s) => (
+                    {activeShoes.map((s) => (
                       <option key={s.shoe_id} value={s.shoe_id}>
                         {s.brand} {s.model}
                       </option>
@@ -834,7 +1038,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
                     Distance (km)
@@ -851,7 +1055,7 @@ export default function App() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Duration (minutes)
+                    Duration (min)
                   </label>
                   <input
                     type="number"
@@ -860,6 +1064,19 @@ export default function App() {
                     required
                     value={durationMin}
                     onChange={(e) => setDurationMin(e.target.value)}
+                    className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    RPE (1–10)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={perceivedExertion}
+                    onChange={(e) => setPerceivedExertion(e.target.value)}
                     className="w-full rounded-xl bg-slate-50 border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
@@ -908,19 +1125,66 @@ export default function App() {
           <div className="lg:col-span-7 space-y-6">
             {/* Shoe Rotation Structural Wear Card */}
             <section className="rounded-2xl bg-white border border-slate-200 p-6 shadow-sm space-y-4">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <Footprints className="h-4 w-4 text-cyan-600" />
-                  Multi-Shoe Structural Wear Rotation
-                </h3>
-                <p className="text-xs text-slate-600 mt-0.5">
-                  Async mileage accumulation synced via{' '}
-                  <code className="text-cyan-700 font-medium">activity.logged</code>
-                </p>
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <Footprints className="h-4 w-4 text-cyan-600" />
+                    Multi-Shoe Structural Wear Rotation
+                  </h3>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Synced with <code className="text-cyan-700 font-medium">:8002/shoes</code>{' '}
+                    &amp; <code className="text-cyan-700 font-medium">activity.logged</code>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAddShoe((v) => !v)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-800 border border-slate-200 transition"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Add Shoe
+                </button>
               </div>
 
+              {showAddShoe && (
+                <form
+                  onSubmit={handleCreateShoe}
+                  className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 grid grid-cols-1 sm:grid-cols-4 gap-2.5"
+                >
+                  <input
+                    type="text"
+                    required
+                    placeholder="Brand (e.g. Hoka)"
+                    value={newShoeBrand}
+                    onChange={(e) => setNewShoeBrand(e.target.value)}
+                    className="rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-xs"
+                  />
+                  <input
+                    type="text"
+                    required
+                    placeholder="Model (e.g. Mach 6)"
+                    value={newShoeModel}
+                    onChange={(e) => setNewShoeModel(e.target.value)}
+                    className="rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-xs"
+                  />
+                  <input
+                    type="number"
+                    min="100"
+                    placeholder="Max km (700)"
+                    value={newShoeMaxKm}
+                    onChange={(e) => setNewShoeMaxKm(e.target.value)}
+                    className="rounded-lg bg-white border border-slate-300 px-2.5 py-1.5 text-xs"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-semibold py-1.5"
+                  >
+                    Save Shoe
+                  </button>
+                </form>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-                {shoes.map((shoe) => {
+                {activeShoes.map((shoe) => {
                   const pct = Math.min(
                     100,
                     Math.round((shoe.current_mileage_km / shoe.max_lifespan_km) * 100)
@@ -964,6 +1228,16 @@ export default function App() {
                         <span>{shoe.current_mileage_km.toFixed(1)} km</span>
                         <span>Max {shoe.max_lifespan_km} km</span>
                       </div>
+
+                      <div className="pt-1 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => handleRetireShoe(shoe.shoe_id)}
+                          className="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-rose-700 transition"
+                        >
+                          <Archive className="h-3 w-3" /> Retire
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -979,8 +1253,8 @@ export default function App() {
                     Rolling 7-Day Fatigue Ledger
                   </h3>
                   <p className="text-xs text-slate-600 mt-0.5">
-                    Deduplicated workout entries feeding{' '}
-                    <code className="text-slate-800 font-medium">fatigue_activity_ledger</code>
+                    Synced with <code className="text-slate-800 font-medium">:8003/activities</code>{' '}
+                    &amp; <code className="text-slate-800 font-medium">fatigue_activity_ledger</code>
                   </p>
                 </div>
                 <span className="text-xs text-slate-500">{ledger.length} entries</span>
@@ -1004,6 +1278,7 @@ export default function App() {
                           <p className="font-semibold text-slate-900">{item.title}</p>
                           <p className="text-[11px] text-slate-500">
                             {new Date(item.activity_date).toLocaleDateString()}
+                            {item.perceived_exertion ? ` • RPE ${item.perceived_exertion}` : ''}
                           </p>
                         </td>
                         <td className="py-3 px-3">

@@ -43,21 +43,21 @@ spec:
               service:
                 name: activity-service
                 port:
-                  number: 8000
+                  number: 8003
           - path: /shoes
             pathType: Prefix
             backend:
               service:
                 name: equipment-service
                 port:
-                  number: 8000
+                  number: 8002
           - path: /paces
             pathType: Prefix
             backend:
               service:
                 name: adaptive-pacing-service
                 port:
-                  number: 8003
+                  number: 8004
           - path: /
             pathType: Prefix
             backend:
