@@ -8,8 +8,10 @@ from uuid import UUID
 
 import aio_pika
 import asyncpg
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException  # <-- JWT: added Depends, removed Header
 from pydantic import BaseModel, Field
+
+from shared.auth import AuthenticatedUser, get_current_user  # <-- JWT: import Keycloak auth
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -22,8 +24,6 @@ RABBITMQ_URL = os.getenv(
 EXCHANGE_NAME = "pacerly.events"
 QUEUE_NAME = "equipment.activity_logged"
 ROUTING_KEY = "activity.logged"
-
-DEFAULT_TEST_USER = UUID("11111111-1111-1111-1111-111111111111")
 
 db_pool: asyncpg.Pool | None = None
 
@@ -128,7 +128,7 @@ async def health_check():
 @app.post("/shoes", status_code=201)
 async def create_shoe(
     shoe: ShoeCreate,
-    x_user_id: Annotated[UUID, Header()] = DEFAULT_TEST_USER,
+    current_user: AuthenticatedUser = Depends(get_current_user),  # <-- JWT
 ):
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -137,7 +137,7 @@ async def create_shoe(
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING *
             """,
-            x_user_id,
+            current_user.user_id,  # <-- JWT
             shoe.brand,
             shoe.model,
             shoe.nickname,
@@ -150,12 +150,12 @@ async def create_shoe(
 
 @app.get("/shoes")
 async def list_shoes(
-    x_user_id: Annotated[UUID, Header()] = DEFAULT_TEST_USER,
+    current_user: AuthenticatedUser = Depends(get_current_user),  # <-- JWT
 ):
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT * FROM shoes WHERE user_id = $1 ORDER BY created_at DESC",
-            x_user_id,
+            current_user.user_id,  # <-- JWT
         )
     return [format_shoe(r) for r in rows]
 
@@ -163,7 +163,7 @@ async def list_shoes(
 @app.patch("/shoes/{shoe_id}/retire")
 async def retire_shoe(
     shoe_id: UUID,
-    x_user_id: Annotated[UUID, Header()] = DEFAULT_TEST_USER,
+    current_user: AuthenticatedUser = Depends(get_current_user),  # <-- JWT
 ):
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -174,7 +174,7 @@ async def retire_shoe(
             RETURNING *
             """,
             shoe_id,
-            x_user_id,
+            current_user.user_id,  # <-- JWT
         )
     if not row:
         raise HTTPException(status_code=404, detail="Shoe not found")
